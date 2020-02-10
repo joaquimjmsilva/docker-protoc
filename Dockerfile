@@ -1,5 +1,6 @@
 ARG alpine=3.9
 ARG go=1.12
+ARG swift=5.1
 ARG grpc
 ARG grpc_java
 
@@ -69,6 +70,23 @@ RUN curl -sSL https://jpa.kapsi.fi/nanopb/download/nanopb-${nanopb}-linux-x86.ta
     mkdir -p /tmp/nanopb && \
     tar -xzf /tmp/nanopb.tar.gz --strip 1 -C /tmp/nanopb
 
+FROM swift:${swift} as build-swift
+
+ARG protoc_version
+
+WORKDIR /tmp
+
+RUN apt-get -y update && apt-get -y install curl unzip
+
+RUN git clone https://github.com/apple/swift-protobuf.git && \
+    cd swift-protobuf && \
+    swift build -c release
+
+RUN curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/protoc-${protoc_version}-linux-x86_64.zip && \
+    unzip -o protoc-${protoc_version}-linux-x86_64.zip -d /usr/local bin/protoc && \
+    unzip -o protoc-${protoc_version}-linux-x86_64.zip -d /usr/local 'include/*' && \
+    rm -f protoc-${protoc_version}-linux-x86_64.zip
+
 FROM alpine:3.9 AS protoc-all
 
 RUN set -ex && apk --update --no-cache add \
@@ -109,6 +127,18 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /defs
 ENTRYPOINT [ "entrypoint.sh" ]
+
+FROM swift:${swift}-slim as protoc-swift
+
+COPY --from=build-swift /usr/local/bin/protoc* /usr/local/bin/
+COPY --from=build-swift /tmp/swift-protobuf/.build/release/protoc-gen-swift /usr/local/bin/
+COPY --from=protoc-all /opt/include/ /opt/include/
+
+ADD all/entrypoint-swift.sh /usr/local/bin
+RUN chmod +x /usr/local/bin/entrypoint-swift.sh
+
+WORKDIR /defs
+ENTRYPOINT [ "entrypoint-swift.sh" ]
 
 # protoc
 FROM protoc-all AS protoc
